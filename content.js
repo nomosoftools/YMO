@@ -26,13 +26,19 @@ document.addEventListener('keyup', (e) => {
   if (e.shiftKey && e.key.startsWith('Arrow')) handleSelection();
 });
 
-// 3. ROBUST CLICK LISTENER (UNDO)
+// 3. ROBUST CLICK LISTENER (UNDO) - Specifically for LEFT CLICK
 document.addEventListener('mousedown', (e) => {
-  const target = e.target;
-  if (target && target.dataset.ymoHighlight === "true") {
-    removeHighlight(target);
-    e.preventDefault();
-    e.stopPropagation();
+  // e.button === 0 ensures this ONLY runs on Left Click
+  // Right Click (2) and Middle Click (1) are ignored, allowing context menus to work.
+  if (e.button === 0) { 
+    const target = e.target;
+    if (target && target.dataset.ymoHighlight === "true") {
+      removeHighlight(target);
+      
+      // Stop the event so the website doesn't trigger other actions
+      e.preventDefault();
+      e.stopPropagation();
+    }
   }
 }, true);
 
