@@ -2,15 +2,29 @@
   "manifest_version": 3,
   "name": "Yellow Magic Orchestra",
   "version": "4.0",
-  "description": "Highlight text on webpages",
-  "permissions": ["activeTab"],
+  "description": "Robust, high-performance text highlighter with undo.",
+  "permissions": ["storage"], 
   "background": {
     "service_worker": "background.js"
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"]
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
     }
-  ]
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/YMO16.png",
+      "48": "icons/YMO48.png",
+      "128": "icons/YMO128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/YMO16.png",
+    "48": "icons/YMO48.png",
+    "128": "icons/YMO128.png"
+  }
 }
