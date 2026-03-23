@@ -1,18 +1,50 @@
-// 1. Listen to both mouse and keyboard selections
+// 1. HIGH-PERFORMANCE CSS INJECTION
+// We inject this as early as possible to ensure hover works immediately.
+(function injectStyles() {
+  const styleId = "ymo-highlight-styles";
+  if (!document.getElementById(styleId)) {
+    const style = document.createElement('style');
+    style.id = styleId;
+    style.textContent = `
+      span[data-ymo-highlight="true"] {
+        transition: filter 0.1s ease !important;
+        cursor: pointer !important;
+      }
+      span[data-ymo-highlight="true"]:hover {
+        filter: brightness(0.8) saturate(1.4) !important;
+        outline: 1px solid rgba(0,0,0,0.2) !important;
+      }
+      span[data-ymo-highlight="true"]:active {
+        opacity: 0.7 !important;
+      }
+    `;
+    (document.head || document.documentElement).appendChild(style);
+  }
+})();
+
+// 2. SELECTION LISTENERS
 document.addEventListener('mouseup', handleSelection);
 document.addEventListener('keyup', (e) => {
-  // Capture Shift + Arrow key selections
-  if (e.shiftKey && e.key.startsWith('Arrow')) {
-    handleSelection();
-  }
+  if (e.shiftKey && e.key.startsWith('Arrow')) handleSelection();
 });
 
+// 3. ROBUST CLICK LISTENER (UNDO)
+// We use 'mousedown' instead of 'click' for faster response and to beat site-specific blocks
+document.addEventListener('mousedown', (e) => {
+  const target = e.target;
+  if (target && target.dataset.ymoHighlight === "true") {
+    // If the user is just clicking (not dragging), remove the highlight
+    removeHighlight(target);
+    
+    // Stop the event from bubbling up to the website's own scripts
+    e.preventDefault();
+    e.stopPropagation();
+  }
+}, true); // The 'true' here uses Event Capturing - it's the most aggressive way to catch a click
+
 function handleSelection() {
-  // Small timeout ensures the browser OS has finished painting the selection
   setTimeout(() => {
     const selection = window.getSelection();
-    
-    // Check if selection exists, has actual text, and isn't just a cursor click
     if (selection && selection.toString().trim().length > 0 && selection.rangeCount > 0) {
       highlightText(selection);
     }
@@ -21,11 +53,16 @@ function handleSelection() {
 
 function highlightText(selection) {
   const range = selection.getRangeAt(0);
+  
+  // Prevent nesting highlights
+  if (range.commonAncestorContainer.parentElement.closest('[data-ymo-highlight="true"]')) {
+    return;
+  }
+
   const span = document.createElement("span");
-  
+  span.dataset.ymoHighlight = "true";
+
   const isDarkMode = isDarkModePage();
-  
-  // Ensure we get the actual element, as anchorNode is often just a text node (#text)
   let selectedElement = selection.anchorNode;
   if (selectedElement.nodeType === Node.TEXT_NODE) {
     selectedElement = selectedElement.parentNode;
@@ -35,44 +72,40 @@ function highlightText(selection) {
   const highlightColor = getHighlightColor(textColor, isDarkMode);
   
   span.style.backgroundColor = highlightColor;
-  // Ensure text contrast against the new background
   span.style.color = isDarkMode ? "#ffffff" : "#000000"; 
   
   try {
-    // Attempt to wrap the text
     range.surroundContents(span);
     
-    // Clear the native blue browser selection so it doesn't overlap your new span
+    // Re-apply selection so it stays blue
+    const newRange = document.createRange();
+    newRange.selectNodeContents(span);
     selection.removeAllRanges();
+    selection.addRange(newRange);
   } catch (error) {
-    // surroundContents FAILS if the selection crosses multiple HTML tags.
-    // Catching this prevents the rest of your script from breaking.
-    console.warn("Highlight failed: Selection crossed element boundaries.");
+    console.warn("Complex selection skipped to prevent page error.");
   }
 }
 
-function isDarkModePage() {
-  // Modern, highly robust OS/Browser-level dark mode check
-  if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-    return true;
+function removeHighlight(spanElement) {
+  const parent = spanElement.parentNode;
+  // Move text back to the parent
+  while (spanElement.firstChild) {
+    parent.insertBefore(spanElement.firstChild, spanElement);
   }
-  
-  // Fallback to your original CSS variable check
-  const colorScheme = window.getComputedStyle(document.documentElement).getPropertyValue('color-scheme');
-  return colorScheme && colorScheme.includes('dark');
+  spanElement.remove();
+  parent.normalize(); // High performance DOM cleanup
+}
+
+function isDarkModePage() {
+  return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
 }
 
 function getHighlightColor(textColor, isDarkMode) {
   if (isDarkMode) return "#3399FF"; 
-
-  // Safely match rgb() or rgba() values
   const rgb = textColor.match(/\d+/g);
   if (rgb && rgb.length >= 3) {
-    const r = parseInt(rgb[0], 10);
-    const g = parseInt(rgb[1], 10);
-    const b = parseInt(rgb[2], 10);
-    
-    const brightness = (0.2126 * r + 0.7152 * g + 0.0722 * b);
+    const brightness = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]);
     return brightness < 128 ? "#FFFF99" : "#3333FF";
   }
   return "#FFFF99"; 
