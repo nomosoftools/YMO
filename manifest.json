@@ -13,18 +13,5 @@
       "js": ["content.js"],
       "run_at": "document_idle"
     }
-  ],
-  "action": {
-    "default_popup": "popup.html",
-    "default_icon": {
-      "16": "icons/YMO16.png",
-      "48": "icons/YMO48.png",
-      "128": "icons/YMO128.png"
-    }
-  },
-  "icons": {
-    "16": "icons/YMO16.png",
-    "48": "icons/YMO48.png",
-    "128": "icons/YMO128.png"
-  }
+  ]
 }
