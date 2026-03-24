@@ -11,6 +11,10 @@
         pointer-events: auto !important;
         user-select: text !important;
         box-decoration-break: clone;
+        -webkit-box-decoration-break: clone;
+        /* Prevent layout shifts in flex/grid containers */
+        display: inline !important; 
+        vertical-align: baseline !important;
       }
       span[data-ymo-highlight="true"]:hover {
         filter: brightness(0.85) saturate(1.2) !important;
@@ -27,19 +31,17 @@ document.addEventListener('keyup', (e) => {
   if (e.shiftKey && e.key.startsWith('Arrow')) handleSelection();
 });
 
-// 3. ROBUST CLICK LISTENER (UNDO) - Aggressive Capture Phase
+// 3. ROBUST CLICK LISTENER (UNDO)
 document.addEventListener('mousedown', (e) => {
   if (e.button === 0) { 
     const target = e.target.closest('[data-ymo-highlight="true"]');
     if (target) {
-      // UNDO LOGIC: Find the group ID so we remove all parts of the merged highlight
       const groupId = target.dataset.ymoGroup;
       if (groupId) {
         document.querySelectorAll(`span[data-ymo-group="${groupId}"]`).forEach(removeHighlight);
       } else {
         removeHighlight(target);
       }
-      
       e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
@@ -59,26 +61,22 @@ function handleSelection() {
 function highlightText(selection) {
   let range = selection.getRangeAt(0);
   
-  // --- INTEGRATION LOGIC START ---
+  // --- INTEGRATION LOGIC ---
   const startHighlight = range.startContainer.parentElement?.closest('[data-ymo-highlight="true"]');
   const endHighlight = range.endContainer.parentElement?.closest('[data-ymo-highlight="true"]');
 
   if (startHighlight) range.setStartBefore(startHighlight);
   if (endHighlight) range.setEndAfter(endHighlight);
 
+  // Use extractContents to manipulate the DOM "offline" (high performance)
   const fragment = range.extractContents();
-  const existingInSelection = fragment.querySelectorAll('[data-ymo-highlight="true"]');
   
-  if (existingInSelection.length > 0) {
-    existingInSelection.forEach(oldSpan => {
-      const parent = oldSpan.parentNode;
-      while (oldSpan.firstChild) {
-        parent.insertBefore(oldSpan.firstChild, oldSpan);
-      }
-      oldSpan.remove();
-    });
-  }
-  // --- INTEGRATION LOGIC END ---
+  // Remove existing spans within the fragment to prevent nesting
+  fragment.querySelectorAll('[data-ymo-highlight="true"]').forEach(oldSpan => {
+    const p = oldSpan.parentNode;
+    while (oldSpan.firstChild) p.insertBefore(oldSpan.firstChild, oldSpan);
+    oldSpan.remove();
+  });
 
   const isDarkMode = isDarkModePage();
   const parentEl = range.commonAncestorContainer.nodeType === 1 
@@ -88,27 +86,23 @@ function highlightText(selection) {
   const textColor = window.getComputedStyle(parentEl).color;
   const highlightColor = getHighlightColor(textColor, isDarkMode);
   
-  // FIX: DEEP TEXT NODE WRAPPING 
-  // We traverse the fragment and only wrap raw text, leaving the HTML blocks perfectly intact.
+  // High-performance TreeWalker
   const walker = document.createTreeWalker(fragment, NodeFilter.SHOW_TEXT, null, false);
   const textNodes = [];
   let node;
   while (node = walker.nextNode()) {
-    const parentTag = node.parentElement?.tagName;
-    // We ignore empty spaces and text inside scripts/styles
-    if (node.nodeValue.trim().length > 0 && parentTag !== 'SCRIPT' && parentTag !== 'STYLE') {
+    // Only wrap nodes that contain actual visible text
+    if (node.nodeValue.replace(/\s/g, '').length > 0) {
       textNodes.push(node);
     }
   }
 
-  // If no valid text nodes were found, return the fragment unharmed to avoid data loss
   if (textNodes.length === 0) {
     range.insertNode(fragment);
     return;
   }
 
-  // Generate a unique Group ID so all wrapped pieces act as a single highlight for the Undo feature
-  const groupId = "ymo-" + Date.now().toString(36) + "-" + Math.random().toString(36).substr(2, 5);
+  const groupId = `ymo-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
   const spans = [];
 
   textNodes.forEach(textNode => {
@@ -118,34 +112,38 @@ function highlightText(selection) {
     span.style.backgroundColor = highlightColor;
     span.style.color = isDarkMode ? "#ffffff" : "#000000"; 
     
-    textNode.parentNode.insertBefore(span, textNode);
-    span.appendChild(textNode);
-    spans.push(span);
+    // Wrap the text node
+    if (textNode.parentNode) {
+      textNode.parentNode.insertBefore(span, textNode);
+      span.appendChild(textNode);
+      spans.push(span);
+    }
   });
 
   try {
-    // Put the perfectly intact, highlighted HTML structure back into the page
     range.insertNode(fragment);
     
-    // Maintain selection status visually over the newly wrapped structure
+    // Smooth selection recovery
     const newRange = document.createRange();
-    newRange.setStartBefore(spans[0]);
-    newRange.setEndAfter(spans[spans.length - 1]);
-    selection.removeAllRanges();
-    selection.addRange(newRange);
+    if (spans.length > 0) {
+      newRange.setStartBefore(spans[0]);
+      newRange.setEndAfter(spans[spans.length - 1]);
+      selection.removeAllRanges();
+      selection.addRange(newRange);
+    }
   } catch (error) {
-    console.warn("Integration failed due to complex HTML structure.", error);
+    console.error("Critical collapse prevented:", error);
   }
 }
 
 function removeHighlight(spanElement) {
   const parent = spanElement.parentNode;
   if (!parent) return; 
-  
   while (spanElement.firstChild) {
     parent.insertBefore(spanElement.firstChild, spanElement);
   }
   spanElement.remove();
+  // normalize() merges adjacent text nodes to prevent DOM bloat
   parent.normalize(); 
 }
 
