@@ -12,7 +12,6 @@
         user-select: text !important;
         box-decoration-break: clone;
         -webkit-box-decoration-break: clone;
-        /* Prevent layout shifts in flex/grid containers */
         display: inline !important; 
         vertical-align: baseline !important;
       }
@@ -59,80 +58,75 @@ function handleSelection() {
 }
 
 function highlightText(selection) {
-  let range = selection.getRangeAt(0);
+  const range = selection.getRangeAt(0);
+  const commonAncestor = range.commonAncestorContainer;
   
-  // --- INTEGRATION LOGIC ---
-  const startHighlight = range.startContainer.parentElement?.closest('[data-ymo-highlight="true"]');
-  const endHighlight = range.endContainer.parentElement?.closest('[data-ymo-highlight="true"]');
-
-  if (startHighlight) range.setStartBefore(startHighlight);
-  if (endHighlight) range.setEndAfter(endHighlight);
-
-  // Use extractContents to manipulate the DOM "offline" (high performance)
-  const fragment = range.extractContents();
+  // Create a unique group ID for this specific highlight action
+  const groupId = `ymo-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
   
-  // Remove existing spans within the fragment to prevent nesting
-  fragment.querySelectorAll('[data-ymo-highlight="true"]').forEach(oldSpan => {
-    const p = oldSpan.parentNode;
-    while (oldSpan.firstChild) p.insertBefore(oldSpan.firstChild, oldSpan);
-    oldSpan.remove();
-  });
-
+  // Determine colors based on the page context
   const isDarkMode = isDarkModePage();
-  const parentEl = range.commonAncestorContainer.nodeType === 1 
-    ? range.commonAncestorContainer 
-    : range.commonAncestorContainer.parentElement;
-  
+  const parentEl = commonAncestor.nodeType === 1 ? commonAncestor : commonAncestor.parentElement;
   const textColor = window.getComputedStyle(parentEl).color;
   const highlightColor = getHighlightColor(textColor, isDarkMode);
-  
-  // High-performance TreeWalker
-  const walker = document.createTreeWalker(fragment, NodeFilter.SHOW_TEXT, null, false);
-  const textNodes = [];
-  let node;
-  while (node = walker.nextNode()) {
-    // Only wrap nodes that contain actual visible text
-    if (node.nodeValue.replace(/\s/g, '').length > 0) {
-      textNodes.push(node);
+
+  // 1. IDENTIFY ALL TEXT NODES WITHIN RANGE
+  const walker = document.createTreeWalker(
+    commonAncestor.nodeType === 1 ? commonAncestor : commonAncestor.parentElement,
+    NodeFilter.SHOW_TEXT,
+    {
+      acceptNode: function(node) {
+        if (!node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+        if (range.intersectsNode(node)) return NodeFilter.FILTER_ACCEPT;
+        return NodeFilter.FILTER_REJECT;
+      }
     }
-  }
+  );
 
-  if (textNodes.length === 0) {
-    range.insertNode(fragment);
-    return;
-  }
+  const nodesToWrap = [];
+  while (walker.nextNode()) nodesToWrap.push(walker.currentNode);
 
-  const groupId = `ymo-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
   const spans = [];
 
-  textNodes.forEach(textNode => {
-    const span = document.createElement("span");
-    span.dataset.ymoHighlight = "true";
-    span.dataset.ymoGroup = groupId;
-    span.style.backgroundColor = highlightColor;
-    span.style.color = isDarkMode ? "#ffffff" : "#000000"; 
-    
-    // Wrap the text node
-    if (textNode.parentNode) {
-      textNode.parentNode.insertBefore(span, textNode);
-      span.appendChild(textNode);
+  // 2. WRAP NODES NON-DESTRUCTIVELY
+  nodesToWrap.forEach(node => {
+    let nodeToWrap = node;
+
+    // Handle partial selections by splitting text nodes
+    if (node === range.startContainer && range.startOffset > 0) {
+      nodeToWrap = node.splitText(range.startOffset);
+    }
+    if (nodeToWrap === range.endContainer && range.endOffset < nodeToWrap.nodeValue.length) {
+      nodeToWrap.splitText(range.endOffset);
+    }
+
+    // Check if already highlighted (Integration Logic)
+    if (nodeToWrap.parentElement.dataset.ymoHighlight === "true") {
+      // If already highlighted, just update the group and color to "merge" them
+      nodeToWrap.parentElement.dataset.ymoGroup = groupId;
+      nodeToWrap.parentElement.style.backgroundColor = highlightColor;
+      spans.push(nodeToWrap.parentElement);
+    } else {
+      // Create new span
+      const span = document.createElement("span");
+      span.dataset.ymoHighlight = "true";
+      span.dataset.ymoGroup = groupId;
+      span.style.backgroundColor = highlightColor;
+      span.style.color = isDarkMode ? "#ffffff" : "#000000";
+      
+      nodeToWrap.parentNode.insertBefore(span, nodeToWrap);
+      span.appendChild(nodeToWrap);
       spans.push(span);
     }
   });
 
-  try {
-    range.insertNode(fragment);
-    
-    // Smooth selection recovery
+  // 3. CLEAN UP & RECOVERY
+  selection.removeAllRanges();
+  if (spans.length > 0) {
     const newRange = document.createRange();
-    if (spans.length > 0) {
-      newRange.setStartBefore(spans[0]);
-      newRange.setEndAfter(spans[spans.length - 1]);
-      selection.removeAllRanges();
-      selection.addRange(newRange);
-    }
-  } catch (error) {
-    console.error("Critical collapse prevented:", error);
+    newRange.setStartBefore(spans[0]);
+    newRange.setEndAfter(spans[spans.length - 1]);
+    selection.addRange(newRange);
   }
 }
 
@@ -143,7 +137,6 @@ function removeHighlight(spanElement) {
     parent.insertBefore(spanElement.firstChild, spanElement);
   }
   spanElement.remove();
-  // normalize() merges adjacent text nodes to prevent DOM bloat
   parent.normalize(); 
 }
 
