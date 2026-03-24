@@ -8,9 +8,9 @@
       span[data-ymo-highlight="true"] {
         transition: filter 0.1s ease !important;
         cursor: pointer !important;
-        display: inline !important;
-        pointer-events: auto !important; /* Ensure the span handles clicks in strict DOMs */
+        pointer-events: auto !important;
         user-select: text !important;
+        box-decoration-break: clone;
       }
       span[data-ymo-highlight="true"]:hover {
         filter: brightness(0.85) saturate(1.2) !important;
@@ -30,18 +30,22 @@ document.addEventListener('keyup', (e) => {
 // 3. ROBUST CLICK LISTENER (UNDO) - Aggressive Capture Phase
 document.addEventListener('mousedown', (e) => {
   if (e.button === 0) { 
-    // Use .closest() to detect the highlight even if the click hits deep text nodes
     const target = e.target.closest('[data-ymo-highlight="true"]');
     if (target) {
-      removeHighlight(target);
+      // UNDO LOGIC: Find the group ID so we remove all parts of the merged highlight
+      const groupId = target.dataset.ymoGroup;
+      if (groupId) {
+        document.querySelectorAll(`span[data-ymo-group="${groupId}"]`).forEach(removeHighlight);
+      } else {
+        removeHighlight(target);
+      }
       
-      // Stop the event immediately to prevent website interference
       e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
     }
   }
-}, true); // True means capture phase: we hear the click before the website does
+}, true);
 
 function handleSelection() {
   setTimeout(() => {
@@ -56,25 +60,25 @@ function highlightText(selection) {
   let range = selection.getRangeAt(0);
   
   // --- INTEGRATION LOGIC START ---
-  const startHighlight = range.startContainer.parentElement.closest('[data-ymo-highlight="true"]');
-  const endHighlight = range.endContainer.parentElement.closest('[data-ymo-highlight="true"]');
+  const startHighlight = range.startContainer.parentElement?.closest('[data-ymo-highlight="true"]');
+  const endHighlight = range.endContainer.parentElement?.closest('[data-ymo-highlight="true"]');
 
   if (startHighlight) range.setStartBefore(startHighlight);
   if (endHighlight) range.setEndAfter(endHighlight);
 
-  const fragment = range.cloneContents();
+  const fragment = range.extractContents();
   const existingInSelection = fragment.querySelectorAll('[data-ymo-highlight="true"]');
   
-  if (existingInSelection.length > 0 || startHighlight || endHighlight) {
-    const rawText = range.toString();
-    range.deleteContents();
-    range.insertNode(document.createTextNode(rawText));
-    range = selection.getRangeAt(0);
+  if (existingInSelection.length > 0) {
+    existingInSelection.forEach(oldSpan => {
+      const parent = oldSpan.parentNode;
+      while (oldSpan.firstChild) {
+        parent.insertBefore(oldSpan.firstChild, oldSpan);
+      }
+      oldSpan.remove();
+    });
   }
   // --- INTEGRATION LOGIC END ---
-
-  const span = document.createElement("span");
-  span.dataset.ymoHighlight = "true";
 
   const isDarkMode = isDarkModePage();
   const parentEl = range.commonAncestorContainer.nodeType === 1 
@@ -84,25 +88,59 @@ function highlightText(selection) {
   const textColor = window.getComputedStyle(parentEl).color;
   const highlightColor = getHighlightColor(textColor, isDarkMode);
   
-  span.style.backgroundColor = highlightColor;
-  span.style.color = isDarkMode ? "#ffffff" : "#000000"; 
-  
-  try {
-    range.surroundContents(span);
+  // FIX: DEEP TEXT NODE WRAPPING 
+  // We traverse the fragment and only wrap raw text, leaving the HTML blocks perfectly intact.
+  const walker = document.createTreeWalker(fragment, NodeFilter.SHOW_TEXT, null, false);
+  const textNodes = [];
+  let node;
+  while (node = walker.nextNode()) {
+    const parentTag = node.parentElement?.tagName;
+    // We ignore empty spaces and text inside scripts/styles
+    if (node.nodeValue.trim().length > 0 && parentTag !== 'SCRIPT' && parentTag !== 'STYLE') {
+      textNodes.push(node);
+    }
+  }
+
+  // If no valid text nodes were found, return the fragment unharmed to avoid data loss
+  if (textNodes.length === 0) {
+    range.insertNode(fragment);
+    return;
+  }
+
+  // Generate a unique Group ID so all wrapped pieces act as a single highlight for the Undo feature
+  const groupId = "ymo-" + Date.now().toString(36) + "-" + Math.random().toString(36).substr(2, 5);
+  const spans = [];
+
+  textNodes.forEach(textNode => {
+    const span = document.createElement("span");
+    span.dataset.ymoHighlight = "true";
+    span.dataset.ymoGroup = groupId;
+    span.style.backgroundColor = highlightColor;
+    span.style.color = isDarkMode ? "#ffffff" : "#000000"; 
     
-    // Maintain selection status
+    textNode.parentNode.insertBefore(span, textNode);
+    span.appendChild(textNode);
+    spans.push(span);
+  });
+
+  try {
+    // Put the perfectly intact, highlighted HTML structure back into the page
+    range.insertNode(fragment);
+    
+    // Maintain selection status visually over the newly wrapped structure
     const newRange = document.createRange();
-    newRange.selectNodeContents(span);
+    newRange.setStartBefore(spans[0]);
+    newRange.setEndAfter(spans[spans.length - 1]);
     selection.removeAllRanges();
     selection.addRange(newRange);
   } catch (error) {
-    console.warn("Integration failed due to complex HTML structure.");
+    console.warn("Integration failed due to complex HTML structure.", error);
   }
 }
 
 function removeHighlight(spanElement) {
   const parent = spanElement.parentNode;
-  if (!parent) return; // Robustness check for dynamic DOM removal
+  if (!parent) return; 
   
   while (spanElement.firstChild) {
     parent.insertBefore(spanElement.firstChild, spanElement);
