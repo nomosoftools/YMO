@@ -33,7 +33,8 @@ document.addEventListener('keyup', (e) => {
 // 3. ROBUST CLICK LISTENER (UNDO)
 document.addEventListener('mousedown', (e) => {
   if (e.button === 0) { 
-    const target = e.target.closest('[data-ymo-highlight="true"]');
+    // Added safety check: ensure .closest exists in case of weird SVG clicks
+    const target = e.target.closest && e.target.closest('[data-ymo-highlight="true"]');
     if (target) {
       const groupId = target.dataset.ymoGroup;
       if (groupId) {
@@ -50,8 +51,26 @@ document.addEventListener('mousedown', (e) => {
 
 function handleSelection() {
   setTimeout(() => {
+    // --- BUG FIX START: Prevent script from interfering with Search Engines and Inputs ---
+    const active = document.activeElement;
+    // 1st Check: Is the user actively focused on an input, textarea, or rich text editor?
+    if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)) {
+      return; // Abort highlight logic entirely
+    }
+    // --- BUG FIX END ---
+
     const selection = window.getSelection();
     if (selection && selection.toString().trim().length > 0 && selection.rangeCount > 0) {
+      
+      // 2nd Check: Verify the actual highlighted text isn't inside a nested editable area
+      const range = selection.getRangeAt(0);
+      const container = range.commonAncestorContainer;
+      const element = container.nodeType === 1 ? container : container.parentElement;
+      
+      if (element && (element.tagName === 'INPUT' || element.tagName === 'TEXTAREA' || element.isContentEditable)) {
+        return; // Abort
+      }
+
       highlightText(selection);
     }
   }, 10);
